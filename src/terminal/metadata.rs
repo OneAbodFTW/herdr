@@ -302,6 +302,14 @@ impl TerminalState {
             .display_agent
     }
 
+    /// Name for this pane in agent notification titles, using the sidebar's precedence:
+    /// reported display agent, then the user-assigned agent name, then the machine label.
+    pub fn notification_identity(&self, agent_label: &str) -> String {
+        self.effective_display_agent()
+            .or_else(|| self.agent_name.clone())
+            .unwrap_or_else(|| agent_label.to_owned())
+    }
+
     pub fn effective_presentation(&self) -> EffectivePresentation {
         self.effective_presentation_for_state_at(self.state, Instant::now())
     }

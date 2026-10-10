@@ -121,16 +121,16 @@ pub fn notification_toast_for_pane_state_update(
     )
 }
 
-fn toast_agent_label(agent_label: &str) -> &str {
-    agent_label
-}
-
 fn toast_event_text(kind: ToastKind) -> &'static str {
     match kind {
         ToastKind::NeedsAttention => "needs attention",
         ToastKind::Finished => "finished",
         ToastKind::UpdateInstalled => "updated",
     }
+}
+
+pub(crate) fn notification_title(kind: ToastKind, identity: &str) -> String {
+    format!("{identity} {}", toast_event_text(kind))
 }
 
 fn sound_for_toast_kind(
@@ -153,8 +153,12 @@ pub fn notification_context(
     pane_id: PaneId,
 ) -> String {
     let mut context = format!("{} · {}", workspace_label, ws_idx + 1);
-    if ws.tabs.len() > 1 {
-        if let Some(tab_idx) = ws.find_tab_index_for_pane(pane_id) {
+    if let Some(tab_idx) = ws.find_tab_index_for_pane(pane_id) {
+        let custom_label = ws
+            .tabs
+            .get(tab_idx)
+            .is_some_and(|tab| tab.custom_name.is_some());
+        if ws.tabs.len() > 1 || custom_label {
             if let Some(label) = ws.tab_display_name(tab_idx) {
                 context.push_str(&format!(" · {label}"));
             }
@@ -1925,6 +1929,7 @@ impl AppState {
             active_tab_suppresses_notifications(is_active_tab, self.outer_terminal_focus);
         let sound = sound_for_toast_kind(kind, suppress_active_tab_notifications)
             .filter(|_| self.sound.allows(known_agent));
+        let title = notification_title(kind, &terminal_state.notification_identity(&agent_label));
         let build_toast = || {
             let workspace_label =
                 self.workspaces[ws_idx].display_name_from_terminals(&self.terminals);
@@ -1932,11 +1937,7 @@ impl AppState {
                 notification_context(&self.workspaces[ws_idx], &workspace_label, ws_idx, pane_id);
             ToastNotification {
                 kind,
-                title: format!(
-                    "{} {}",
-                    toast_agent_label(&agent_label),
-                    toast_event_text(kind)
-                ),
+                title: title.clone(),
                 context,
                 position: None,
                 target: Some(ToastTarget {
@@ -3785,6 +3786,57 @@ mod tests {
         assert_eq!(toast.kind, ToastKind::NeedsAttention);
         assert_eq!(toast.title, "hermes needs attention");
         assert_eq!(toast.context, "background · 2");
+    }
+
+    #[test]
+    fn toast_title_uses_sidebar_identity_and_context_keeps_custom_tab_label() {
+        let blocked_toast = |agent_name: Option<&str>, display_agent: Option<&str>| {
+            let mut state = app_with_workspaces(&["active", "background"]);
+            state.active = Some(0);
+            state.toast_config.delivery = crate::config::ToastDelivery::Herdr;
+            state.workspaces[1].tabs[0].custom_name = Some("backend".into());
+            let bg_pane_id = *state.workspaces[1].panes.keys().next().unwrap();
+            let terminal_id = state.workspaces[1].terminal_id(bg_pane_id).unwrap().clone();
+            let terminal = state.terminals.get_mut(&terminal_id).unwrap();
+            terminal.agent_name = agent_name.map(str::to_owned);
+            if let Some(display_agent) = display_agent {
+                terminal.set_agent_metadata(crate::terminal::AgentMetadataReport {
+                    source: "user:status".into(),
+                    agent_label: Some("hermes".into()),
+                    applies_to_source: None,
+                    title: None,
+                    display_agent: Some(display_agent.into()),
+                    state_labels: std::collections::HashMap::new(),
+                    clear_title: false,
+                    clear_display_agent: false,
+                    clear_state_labels: false,
+                    ttl: None,
+                    seq: None,
+                });
+            }
+            state.handle_app_event(AppEvent::HookStateReported {
+                pane_id: bg_pane_id,
+                source: "custom:hermes".into(),
+                agent_label: "hermes".into(),
+                state: AgentState::Blocked,
+                message: None,
+                seq: None,
+                session_ref: None,
+            });
+            state.toast.clone().expect("blocked background agent toast")
+        };
+
+        let machine = blocked_toast(None, None);
+        assert_eq!(machine.title, "hermes needs attention");
+        assert_eq!(machine.context, "background · 2 · backend");
+        assert_eq!(
+            blocked_toast(Some("reviewer"), None).title,
+            "reviewer needs attention"
+        );
+        assert_eq!(
+            blocked_toast(Some("reviewer"), Some("zai/repro")).title,
+            "zai/repro needs attention"
+        );
     }
 
     #[test]

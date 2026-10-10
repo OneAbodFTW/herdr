@@ -67,22 +67,23 @@ impl HeadlessServer {
         let Some(agent_label) = agent_label.or(previous_agent_label) else {
             return false;
         };
-        let (semantic_kind, event_text, sound) = match kind {
+        let identity = workspace
+            .terminal_id(pane_id)
+            .and_then(|terminal_id| self.app.state.terminals.get(terminal_id))
+            .map(|terminal| terminal.notification_identity(agent_label))
+            .unwrap_or_else(|| agent_label.to_owned());
+        let (semantic_kind, sound) = match kind {
             crate::app::state::ToastKind::NeedsAttention => (
                 protocol::SemanticNotificationKind::NeedsAttention,
-                "needs attention",
                 Some(protocol::SemanticNotificationSound::Request),
             ),
             crate::app::state::ToastKind::Finished => (
                 protocol::SemanticNotificationKind::Finished,
-                "finished",
                 Some(protocol::SemanticNotificationSound::Done),
             ),
-            crate::app::state::ToastKind::UpdateInstalled => (
-                protocol::SemanticNotificationKind::UpdateInstalled,
-                "updated",
-                None,
-            ),
+            crate::app::state::ToastKind::UpdateInstalled => {
+                (protocol::SemanticNotificationKind::UpdateInstalled, None)
+            }
         };
         let workspace_id = workspace.id.clone();
         let tab_id = crate::workspace::public_tab_id_for_number(&workspace_id, tab_number);
@@ -96,7 +97,7 @@ impl HeadlessServer {
         self.send_to_client_shells(ServerMessage::SemanticNotification(
             protocol::SemanticNotification {
                 kind: semantic_kind,
-                title: format!("{agent_label} {event_text}"),
+                title: crate::app::actions::notification_title(kind, &identity),
                 body: non_empty_body(&context),
                 sound,
                 agent,
@@ -152,11 +153,11 @@ impl HeadlessServer {
         let Some(agent_label) = update.agent_label.as_deref() else {
             return;
         };
-        let event_text = match kind {
-            crate::app::state::ToastKind::NeedsAttention => "needs attention",
-            crate::app::state::ToastKind::Finished => "finished",
-            crate::app::state::ToastKind::UpdateInstalled => "updated",
-        };
+        let identity = ws
+            .terminal_id(update.pane_id)
+            .and_then(|terminal_id| self.app.state.terminals.get(terminal_id))
+            .map(|terminal| terminal.notification_identity(agent_label))
+            .unwrap_or_else(|| agent_label.to_owned());
         let workspace_label =
             ws.display_name_from(&self.app.state.terminals, &self.app.terminal_runtimes);
         let context = crate::app::actions::notification_context(
@@ -168,7 +169,7 @@ impl HeadlessServer {
         self.send_notify_to_foreground_client(
             toast_notify_kind(self.app.state.toast_config.delivery)
                 .expect("toast forwarding requires a client notification kind"),
-            format!("{agent_label} {event_text}"),
+            crate::app::actions::notification_title(kind, &identity),
             non_empty_body(&context),
         );
     }

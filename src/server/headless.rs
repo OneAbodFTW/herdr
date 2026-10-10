@@ -3133,18 +3133,13 @@ impl HeadlessServer {
                     *prev_state,
                     new_state,
                 ) {
-                    if let Some(agent_label) = self
-                        .app
-                        .state
-                        .terminals
-                        .get(&terminal_id)
-                        .and_then(|terminal| terminal.effective_agent_label())
+                    if let Some(identity) =
+                        self.app.state.terminals.get(&terminal_id).and_then(|terminal| {
+                            terminal
+                                .effective_agent_label()
+                                .map(|agent_label| terminal.notification_identity(agent_label))
+                        })
                     {
-                        let event_text = match kind {
-                            crate::app::state::ToastKind::NeedsAttention => "needs attention",
-                            crate::app::state::ToastKind::Finished => "finished",
-                            crate::app::state::ToastKind::UpdateInstalled => "updated",
-                        };
                         let workspace_label = self.app.state.workspaces[*ws_idx].display_name_from(
                             &self.app.state.terminals,
                             &self.app.terminal_runtimes,
@@ -3158,7 +3153,7 @@ impl HeadlessServer {
                         self.send_notify_to_foreground_client(
                             toast_notify_kind(self.app.state.toast_config.delivery)
                                 .expect("toast forwarding requires a client notification kind"),
-                            format!("{agent_label} {event_text}"),
+                            crate::app::actions::notification_title(kind, &identity),
                             non_empty_body(&context),
                         );
                     }
